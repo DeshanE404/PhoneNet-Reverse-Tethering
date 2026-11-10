@@ -1,3 +1,7 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PhoneNet.CLI/PhoneNet.CLI.csproj" />
+    <Project Path="src/PhoneNet.Core/PhoneNet.Core.csproj" />
+  </Folder>
   <Project Path="PhoneNet.CLI/PhoneNet.CLI.csproj" />
 </Solution>
