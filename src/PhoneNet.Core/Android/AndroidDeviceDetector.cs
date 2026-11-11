@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace PhoneNet.Core.Android;
@@ -19,24 +18,22 @@ public sealed record AndroidDetectionResult(
 public sealed class AndroidDeviceDetector
 {
     private static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(10);
-    private readonly string? configuredAdbPath;
+    private readonly AdbProcessRunner adb;
 
     public AndroidDeviceDetector(string? adbPath = null)
     {
-        configuredAdbPath = string.IsNullOrWhiteSpace(adbPath)
-            ? Environment.GetEnvironmentVariable("PHONENET_ADB_PATH")
-            : adbPath;
+        adb = new AdbProcessRunner(adbPath);
     }
 
     public async Task<bool> IsAdbAvailableAsync()
     {
-        var result = await RunAdbAsync("version");
+        var result = await adb.RunAsync("version");
         return result.Started && result.ExitCode == 0;
     }
 
     public async Task<AndroidDetectionResult> DetectDevicesAsync()
     {
-        var adbCheck = await RunAdbAsync("version");
+        var adbCheck = await adb.RunAsync("version");
         if (!adbCheck.Started)
         {
             return new AndroidDetectionResult(false, [],
@@ -48,13 +45,13 @@ public sealed class AndroidDeviceDetector
             return new AndroidDetectionResult(false, [], "ADB is installed but could not be started.");
         }
 
-        var server = await RunAdbAsync("start-server");
+        var server = await adb.RunAsync("start-server");
         if (!server.Started || server.ExitCode != 0)
         {
             return new AndroidDetectionResult(true, [], "ADB server could not be started.");
         }
 
-        var devices = await RunAdbAsync("devices", "-l");
+        var devices = await adb.RunAsync("devices", "-l");
         if (!devices.Started)
         {
             return new AndroidDetectionResult(true, [], "ADB device detection could not be started.");
@@ -68,53 +65,6 @@ public sealed class AndroidDeviceDetector
         var parsedDevices = ParseDevices(devices.Output);
         return new AndroidDetectionResult(true, parsedDevices,
             parsedDevices.Count == 0 ? "No Android devices detected." : "Android device detection completed.");
-    }
-
-    private async Task<ProcessResult> RunAdbAsync(params string[] arguments)
-    {
-        try
-        {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = string.IsNullOrWhiteSpace(configuredAdbPath) ? "adb" : configuredAdbPath,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                }
-            };
-
-            foreach (var argument in arguments)
-            {
-                process.StartInfo.ArgumentList.Add(argument);
-            }
-
-            if (!process.Start())
-            {
-                return ProcessResult.NotStarted;
-            }
-
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(ProcessTimeout);
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-                return new ProcessResult(false, -1, string.Empty, true);
-            }
-
-            return new ProcessResult(true, process.ExitCode, await outputTask + await errorTask, false);
-        }
-        catch (Exception)
-        {
-            return ProcessResult.NotStarted;
-        }
     }
 
     private static IReadOnlyList<AndroidDeviceInfo> ParseDevices(string output)
@@ -146,8 +96,4 @@ public sealed class AndroidDeviceDetector
         return new AndroidDeviceInfo(fields[0], fields[1], product, model, device, transportId);
     }
 
-    private sealed record ProcessResult(bool Started, int ExitCode, string Output, bool TimedOut)
-    {
-        public static ProcessResult NotStarted => new(false, -1, string.Empty, false);
-    }
 }

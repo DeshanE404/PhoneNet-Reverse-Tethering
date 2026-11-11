@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using PhoneNet.Core.Android;
 using PhoneNet.Core.Networking;
 
@@ -11,7 +12,8 @@ while (true)
     Console.WriteLine("1. Detect Ethernet adapters");
     Console.WriteLine("2. Test Internet Connectivity");
     Console.WriteLine("3. Detect Android Devices");
-    Console.WriteLine("4. Exit");
+    Console.WriteLine("4. Manage ADB Port Forwarding");
+    Console.WriteLine("5. Exit");
     Console.WriteLine();
     Console.Write("Select an option: ");
 
@@ -27,6 +29,9 @@ while (true)
             await DetectAndroidDevicesAsync();
             break;
         case "4":
+            await ManagePortForwardingAsync();
+            break;
+        case "5":
             return;
         default:
             Console.WriteLine("Invalid selection.");
@@ -154,6 +159,76 @@ static async Task DetectAndroidDevicesAsync()
     }
 
     Console.WriteLine("Android device detection completed.");
+    Pause();
+}
+
+static async Task ManagePortForwardingAsync()
+{
+    Console.Clear();
+    Console.WriteLine("========== ADB PORT FORWARDING ==========");
+    Console.WriteLine();
+
+    var detection = await new AndroidDeviceDetector().DetectDevicesAsync();
+    if (!detection.IsAdbAvailable)
+    {
+        Console.WriteLine(detection.Message);
+        Pause();
+        return;
+    }
+
+    var devices = detection.Devices.Where(device => device.State == "device").ToArray();
+    if (devices.Length == 0)
+    {
+        Console.WriteLine("No authorized Android devices available.");
+        Console.WriteLine("Unauthorized and offline devices cannot be selected.");
+        Pause();
+        return;
+    }
+
+    for (var index = 0; index < devices.Length; index++)
+    {
+        Console.WriteLine($"{index + 1}. {devices[index].SerialNumber} - {Display(devices[index].Model)}");
+    }
+    Console.Write("Select device: ");
+    if (!int.TryParse(Console.ReadLine(), out var selection) || selection < 1 || selection > devices.Length)
+    {
+        Console.WriteLine("Invalid device selection.");
+        Pause();
+        return;
+    }
+
+    var selected = devices[selection - 1];
+    var server = new TcpCommunicationServer();
+    var forwarder = new AdbPortForwarder();
+    try
+    {
+        await server.StartAsync();
+        var created = await forwarder.CreateReverseAsync(selected.SerialNumber);
+        Console.WriteLine();
+        Console.WriteLine($"Device: {selected.SerialNumber}");
+        Console.WriteLine($"Server : 127.0.0.1:27183");
+        Console.WriteLine($"Forward: {created.Message}");
+        if (!created.Success) return;
+
+        var rules = await forwarder.ListReverseAsync(selected.SerialNumber);
+        Console.WriteLine("Configuration:");
+        foreach (var rule in rules) Console.WriteLine($"  {rule}");
+        Console.WriteLine();
+        Console.Write("Press R to remove forwarding and stop server, or any key to stop: ");
+        Console.ReadKey(intercept: true);
+    }
+    catch (SocketException exception)
+    {
+        Console.WriteLine($"TCP server could not start: {exception.Message}");
+    }
+    finally
+    {
+        await forwarder.RemoveReverseAsync(selected.SerialNumber);
+        await server.StopAsync();
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Forwarding removed and server stopped.");
     Pause();
 }
 
